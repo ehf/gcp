@@ -1,0 +1,70 @@
+--- 
+
+# ansible-playbook -i inventory.txt create_gcp_patch_job.yml 
+# ansible-playbook -i inventory.txt create_gcp_patch_job.yml -t generate-access-token
+
+
+# https://cloud.google.com/compute/docs/osconfig/rest/v1/projects.patchJobs/execute 
+# https://cloud.google.com/compute/docs/osconfig/rest/v1/PatchConfig#YumSettings
+# https://cloud.google.com/compute/docs/os-patch-management/create-patch-job#create-patch-api
+# https://cloud.google.com/compute/docs/os-patch-management/manage-patch-jobs
+# https://cloud.google.com/compute/docs/osconfig/rest/v1/projects.patchJobs/execute?apix=true#response-body
+# https://cloud.google.com/compute/docs/osconfig/rest/v1/projects.patchDeployments 
+# https://cloud.google.com/compute/docs/osconfig/rest
+
+# https://developers.google.com/spectrum-access-system/guides/authorization-and-authentication
+# https://gist.github.com/ryu1kn/c76aed0af8728f659730d9c26c9ee0ed
+
+
+- hosts: nodes
+  gather_facts: no
+  connection: local
+  vars:
+    gcp_machine_type: 'e2-small'
+    gcp_image: 'projects/gce-uefi-images/global/images/centos-7-v20200403'
+    gcp_project: 'ehf-95020' 
+    gcp_zone: 'us-west1-b'
+    gcp_network: 'default'
+    gcp_sa_file: 'ehf-95020.json'
+    gcp_api_file: 'ehf-95020-api.json'
+    gcp_api_auth_scope: 'https://www.googleapis.com/auth/cloud-platform'
+    api_key_id: "{{ (lookup('file', '{{ gcp_api_file }}') | from_json).get('api_key_id') }}"
+    api_client_id: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('client_id') }}"
+    api_token_uri: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('token_uri') }}"
+    api_auth_uri: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('auth_uri') }}"
+    api_osconfig: 'osconfig.googleapis.com'
+    api_ospatch: "https://{{ api_osconfig }}/v1/projects/{{ gcp_project }}/patchJobs:execute?key={{ api_key_id }}"
+    ansible_python_interpreter: '/opt/homebrew/bin/python3'
+  tasks:
+    - name: "generate access token"
+      shell: "cd /Users/ehf/Downloads && ./get-access-token.sh {{ gcp_sa_file }} {{ gcp_api_auth_scope }}"
+      register: access_token 
+      tags:
+        - generate-access-token
+        - create-patch-job
+
+    - debug: msg={{ access_token.stdout }}
+      tags:
+        - generate-access-token
+        - create-patch-job
+
+    - name: "execute patch job"
+      uri: 
+        url: "{{ api_ospatch }}"
+        force_basic_auth: no
+        headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ access_token.stdout }}"
+        method: POST
+        body: "{{ lookup('file', 'gcp-patch.json') }}"
+        body_format: json
+        validate_certs: no
+        return_content: yes
+      register: patchjob
+      tags:
+        - create-patch-job
+
+    - debug: msg={{ patchjob.content }}
+      tags:
+        - create-patch-job
