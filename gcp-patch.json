@@ -1,0 +1,32 @@
+{
+	"displayName": "patch-job-dev-4",
+	"duration": "3600s",
+	"rollout": {
+		"mode": "CONCURRENT_ZONES",
+		"disruptionBudget": {
+			"percent": 50
+		}
+	},
+	"patchConfig": {
+		"rebootConfig": "DEFAULT",
+		"yum": {
+			"security": false,
+			"minimal": false 
+		}
+	},
+	"instanceFilter": {
+		"groupLabels": [{
+			"labels": {
+				"env": "dev",
+				"app": "web"
+			}
+		}],
+		"instanceNamePrefixes": [
+			"test-dev-"
+		],
+		"zones": [
+			"us-west1-a",
+			"us-west1-b"
+		]
+	}
+}
