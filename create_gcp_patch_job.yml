@@ -37,7 +37,9 @@
     ansible_python_interpreter: '/opt/homebrew/bin/python3'
   tasks:
     - name: "generate access token"
-      shell: "cd /Users/ehf/Downloads && ./get-access-token.sh {{ gcp_sa_file }} {{ gcp_api_auth_scope }}"
+      command: "./get-access-token.sh {{ gcp_sa_file }} {{ gcp_api_auth_scope }}"
+      args:
+        chdir: /Users/ehf/Downloads
       register: access_token 
       tags:
         - generate-access-token
