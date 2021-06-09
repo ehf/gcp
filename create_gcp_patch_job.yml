@@ -1,5 +1,7 @@
 --- 
 
+# export GCP_OS_MGMT_BIN=$HOME/gcp/bin
+# export GCP_OS_MGMT_CONF=$HOME/gcp/conf
 # ansible-playbook -i inventory.txt create_gcp_patch_job.yml 
 # ansible-playbook -i inventory.txt create_gcp_patch_job.yml -t generate-access-token
 
@@ -20,26 +22,26 @@
   gather_facts: no
   connection: local
   vars:
-    gcp_machine_type: 'e2-small'
-    gcp_image: 'projects/gce-uefi-images/global/images/centos-7-v20200403'
-    gcp_project: 'ehf-95020' 
-    gcp_zone: 'us-west1-b'
-    gcp_network: 'default'
-    gcp_sa_file: 'ehf-95020.json'
-    gcp_api_file: 'ehf-95020-api.json'
-    gcp_api_auth_scope: 'https://www.googleapis.com/auth/cloud-platform'
-    api_key_id: "{{ (lookup('file', '{{ gcp_api_file }}') | from_json).get('api_key_id') }}"
+    gcp_bin_dir: "{{ lookup('env','GCP_OS_MGMT_BIN') }}"
+    conf_file: "{{ lookup('env','GCP_OS_MGMT_CONF') }}"
+    gcp_sa_file: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_sa_file') }}"
+    gcp_project: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('project_id') }}"
+    gcp_sa_email: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('client_email') }}"
+    api_key_id: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('api_key_id') }}"
     api_client_id: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('client_id') }}"
     api_token_uri: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('token_uri') }}"
     api_auth_uri: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('auth_uri') }}"
     api_osconfig: 'osconfig.googleapis.com'
-    api_ospatch: "https://{{ api_osconfig }}/v1/projects/{{ gcp_project }}/patchJobs:execute?key={{ api_key_id }}"
-    ansible_python_interpreter: '/opt/homebrew/bin/python3'
+    api_ospatch_base: "{{ api_osconfig }}/v1"
+    api_ospatch_exec: "https://{{ api_ospatch_base }}/projects/{{ gcp_project }}/patchJobs:execute?key={{ api_key_id }}"
+    gcp_api_auth_scope: 'https://www.googleapis.com/auth/cloud-platform'
+    gcp_patch_list_retries: '60'
+    ansible_python_interpreter: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('python_interpreter') }}"
   tasks:
     - name: "generate access token"
       command: "./get-access-token.sh {{ gcp_sa_file }} {{ gcp_api_auth_scope }}"
       args:
-        chdir: /Users/ehf/Downloads
+        chdir: "{{ gcp_bin_dir }}"
       register: access_token 
       tags:
         - generate-access-token
@@ -52,7 +54,7 @@
 
     - name: "execute patch job"
       uri: 
-        url: "{{ api_ospatch }}"
+        url: "{{ api_ospatch_exec }}"
         force_basic_auth: no
         headers:
           Accept: "application/json"
@@ -63,10 +65,68 @@
         body_format: json
         validate_certs: no
         return_content: yes
-      register: patchjob
+      register: patchjob_exec
       tags:
         - create-patch-job
 
-    - debug: msg={{ patchjob.content }}
+    - debug: var=patchjob_exec
       tags:
         - create-patch-job
+
+    - name: "hold for a bit while patch job initializes"
+      pause:
+        seconds: 60
+      tags:
+        - create-patch-job
+        
+    - name: "get patch job general status"
+      uri:
+        url: "https://{{ api_ospatch_base }}/{{ patchjob_exec.json.name }}?key={{ api_key_id }}"
+        force_basic_auth: no
+        headers:
+          Authorization: "Bearer {{ access_token.stdout }}"
+        method: GET
+        validate_certs: no
+        return_content: yes
+      register: patchjob_general_list
+      until: 
+        - patchjob_general_list.json.state == "SUCCEEDED"
+        - patchjob_general_list.json.percentComplete == 100
+      retries: "{{ gcp_patch_list_retries }}"
+      delay: 20      
+      tags:
+        - create-patch-job
+        - monitor-patch-job
+        - list-patch-job-general
+
+    - name: "output general patchjob status"
+      debug: var=patchjob_general_list.json
+      tags:
+        - create-patch-job
+        - monitor-patch-job
+        - list-patch-job-general
+
+    - name: "get patch job instance details"
+      uri:
+        url: "https://{{ api_ospatch_base }}/{{ patchjob_exec.json.name }}/instanceDetails?key={{ api_key_id }}"
+        force_basic_auth: no
+        headers:
+          Authorization: "Bearer {{ access_token.stdout }}"
+        method: GET
+        validate_certs: no
+        return_content: yes
+      register: patchjob_instance_list
+      until:
+        - patchjob_instance_list.json.patchJobInstanceDetails[0].state == "SUCCEEDED"
+      retries: "{{ gcp_patch_list_retries }}"
+      delay: 20
+      tags:
+        - create-patch-job
+        - monitor-patch-job
+        - list-patch-job-instance  
+
+    - debug: var=patchjob_instance_list.json.patchJobInstanceDetails
+      tags:
+        - create-patch-job
+        - monitor-patch-job
+        - list-patch-job-instance  

@@ -1,5 +1,6 @@
 --- 
 
+# $ export GCP_OS_MGMT_CONF=$HOME/Workspace/conf/my-conf.json
 # $ ansible-playbook -i inventory.txt create_gcp_instance.yml -t create-instances
 # $ ansible-playbook -i inventory.txt create_gcp_instance.yml -t delete-instances
 
@@ -7,14 +8,16 @@
   gather_facts: no
   connection: local
   vars:
-    gcp_machine_type: 'e2-small'
-    gcp_image: 'projects/gce-uefi-images/global/images/centos-7-v20200403'
-    gcp_project: 'ehf-95020' 
-    gcp_zone: 'us-west1-b'
-    gcp_network: 'default'
-    gcp_sa_file: 'ehf-95020.json'
+    conf_file: "{{ lookup('env','GCP_OS_MGMT_CONF') }}"
+    gcp_sa_file: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_sa_file') }}"
+    gcp_machine_type: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_machine_type') }}"
+    gcp_image: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_image_full') }}"
+    gcp_zone: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_zone') }}"
+    gcp_network: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_network') }}"
+    gcp_project: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('project_id') }}"
     gcp_sa_email: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('client_email') }}"
-    ansible_python_interpreter: /opt/homebrew/bin/python3
+    gcp_api_auth_scope: 'https://www.googleapis.com/auth/cloud-platform'
+    ansible_python_interpreter: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('python_interpreter') }}"
   tasks:
     - name: "create instance"
       gcp_compute_instance:
@@ -40,7 +43,7 @@
         service_accounts:
         - email: "{{ gcp_sa_email }}"
           scopes:
-          - https://www.googleapis.com/auth/cloud-platform
+          - "{{ gcp_api_auth_scope }}"
         state: present
       loop: "{{ range(1,5) }}"
       tags:
