@@ -1,0 +1,76 @@
+--- 
+
+- hosts: nodes
+  connection: local
+  gather_facts: no
+  vars:
+    gcp_bin_dir: "{{ lookup('env','GCP_OS_MGMT_BIN') }}"
+    conf_file: "{{ lookup('env','GCP_OS_MGMT_CONF') }}"
+    gcp_patch_job_id: "{{ lookup('env','GCP_PATCH_JOB_ID') }}"
+    gcp_sa_file: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('gcp_sa_file') }}"
+    gcp_project: "{{ (lookup('file', '{{ gcp_sa_file }}') | from_json).get('project_id') }}"
+    api_key_id: "{{ (lookup('file', '{{ conf_file }}') | from_json).get('api_key_id') }}"
+    api_osconfig: 'osconfig.googleapis.com'
+    api_ospatch_base: "{{ api_osconfig }}/v1"
+    gcp_api_auth_scope: 'https://www.googleapis.com/auth/cloud-platform'
+    gcp_patch_list_retries: '60'
+    ansible_python_interpreter: /opt/homebrew/bin/python3
+  tasks: 
+    - name: "generate access token"
+      command: "./get-access-token.sh {{ gcp_sa_file }} {{ gcp_api_auth_scope }}"
+      args:
+        chdir: "{{ gcp_bin_dir }}"
+      register: access_token 
+      tags:
+        - generate-access-token
+        - list-patch-job-general
+        - list-patch-job-instance
+
+    - name: "get general patch job status"
+      uri:
+        url: "https://{{ api_ospatch_base }}/projects/{{ gcp_project }}/patchJobs/{{ gcp_patch_job_id }}?key={{ api_key_id }}"
+        force_basic_auth: no
+        headers:
+          Authorization: "Bearer {{ access_token.stdout }}"
+        method: GET
+        validate_certs: no
+        return_content: yes
+      register: patchjob_general_list
+      until: 
+        - patchjob_general_list.json.state == "SUCCEEDED"
+        - patchjob_general_list.json.percentComplete == 100
+      retries: "{{ gcp_patch_list_retries }}"
+      delay: 20
+      tags:
+        - list-patch-job  
+        - list-patch-job-general
+
+    - name: "output general patchjob status"
+      debug: var=patchjob_general_list.json
+      tags:
+        - list-patch-job  
+        - list-patch-job-general
+
+    - name: "get patch job status instance details"
+      uri:
+        url: "https://{{ api_ospatch_base }}/projects/{{ gcp_project }}/patchJobs/{{ gcp_patch_job_id }}/instanceDetails?key={{ api_key_id }}"
+        force_basic_auth: no
+        headers:
+          Authorization: "Bearer {{ access_token.stdout }}"
+        method: GET
+        validate_certs: no
+        return_content: yes
+      register: patchjob_instance_list
+      until:
+        - patchjob_instance_list.json.patchJobInstanceDetails[0].state == "SUCCEEDED"
+      retries: "{{ gcp_patch_list_retries }}"
+      delay: 20
+      tags:
+        - list-patch-job  
+        - list-patch-job-instance  
+
+    - name: "output instance patchjob details"
+      debug: var=patchjob_instance_list.json.patchJobInstanceDetails
+      tags:
+        - list-patch-job  
+        - list-patch-job-instance  
